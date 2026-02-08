@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+venv/
+.env
+
+# YOLO model weights (large binary)
+*.pt
+
+# Runtime data
+zones.json
+violations.json
+recordings/
+reports/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
