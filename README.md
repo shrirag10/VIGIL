@@ -17,6 +17,40 @@
 
 ---
 
+## Screenshots
+
+### Dashboard
+Real-time command center with live camera feeds, KPI ribbon, violation ticker, and system status.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Analytics
+Violation charts by camera, zone type distribution, hourly trends, and camera FPS performance.
+
+![Analytics](docs/screenshots/analytics.png)
+
+### Zone Editor
+Draw restricted, warning, and safe zones directly on camera feeds with live preview.
+
+![Zones](docs/screenshots/zones.png)
+
+### Recordings & Reports
+Video recording management and PDF report generation (daily, weekly, monthly).
+
+![Recordings](docs/screenshots/recordings.png)
+
+### Settings — AI Model Selector & Themes
+Hot-swap between 7 AI models at runtime. Choose from Dark, Light, or Midnight themes.
+
+![Settings](docs/screenshots/settings.png)
+
+### Settings — Detection & System
+Barrier detection, tamper detection, audio alarm configuration, and system information.
+
+![Settings System](docs/screenshots/settings-system.png)
+
+---
+
 ## Overview
 
 VIGIL is a production-grade AI-powered safety system that mounts on warehouse forklifts to detect pedestrians in real time. It ships with **7 swappable AI models** — from lightweight YOLO11 Nano to high-accuracy RT-DETR transformers — and pairs them with a modern React command-center dashboard, gRPC streaming, and optional Kafka event pipelines.
