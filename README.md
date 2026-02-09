@@ -19,13 +19,14 @@
 
 ## Overview
 
-VIGIL is a production-grade AI-powered safety system that mounts on warehouse forklifts to detect pedestrians in real time. It combines YOLOv8 computer vision with a modern React command-center dashboard, gRPC streaming, and optional Kafka event pipelines.
+VIGIL is a production-grade AI-powered safety system that mounts on warehouse forklifts to detect pedestrians in real time. It ships with **7 swappable AI models** — from lightweight YOLO11 Nano to high-accuracy RT-DETR transformers — and pairs them with a modern React command-center dashboard, gRPC streaming, and optional Kafka event pipelines.
 
 **Key capabilities:**
 
 | Capability | Details |
 |---|---|
-| **Multi-Camera Detection** | Up to 4 simultaneous camera feeds with real-time YOLOv8n inference |
+| **Multi-Model AI** | 7 detection models (YOLO11n/s/m, YOLOv8n/s, RT-DETR L/X) — hot-swap at runtime |
+| **Multi-Camera Detection** | Up to 4 simultaneous camera feeds with real-time inference |
 | **Zone Enforcement** | Draw restricted / warning / safe zones directly on camera feeds |
 | **Barrier Recognition** | Detects red/yellow industrial safety barriers, filters false positives |
 | **Tamper Detection** | Alerts on camera blocking, covering, or disconnection |
@@ -78,7 +79,7 @@ VIGIL is a production-grade AI-powered safety system that mounts on warehouse fo
 | **State** | Zustand 5 + persist middleware | Client state + theme persistence |
 | **Charts** | Recharts | Analytics & time-series visualization |
 | **Backend** | FastAPI + Uvicorn | REST API, MJPEG streaming, static serving |
-| **Detection** | YOLOv8n (Ultralytics) | Person + object inference at 30+ FPS |
+| **Detection** | YOLO11 / YOLOv8 / RT-DETR (Ultralytics) | Multi-model person + object inference, hot-swappable |
 | **Vision** | OpenCV 4 | Frame capture, MJPEG encoding, recording |
 | **RPC** | gRPC + Protocol Buffers | Bi-directional streaming, service definitions |
 | **Events** | Apache Kafka | Async event pipeline (5 topics) |
@@ -154,11 +155,28 @@ The command-center dashboard provides a single-pane view of all system activity:
 
 | Feature | Description |
 |---------|-------------|
-| **Person Detection** | YOLOv8n inference with configurable confidence thresholds |
+| **Multi-Model AI** | 7 models with runtime hot-swap — see table below |
+| **Person Detection** | Configurable confidence thresholds, runs on CPU or GPU |
 | **Barrier Detection** | HSV color-space analysis for red/yellow industrial barriers |
 | **Behind-Barrier Filtering** | Suppresses false positives when a person is behind a detected barrier |
 | **Zone Enforcement** | Polygon zones drawn on camera feeds — restricted (red), warning (yellow), safe (green) |
 | **Tamper Detection** | Darkness analysis detects camera blocking; heartbeat detects disconnection |
+
+#### Supported AI Models
+
+Switch models at runtime from **Settings → AI Detection Model** or via `POST /api/ai/models/switch`.
+
+| Model | Family | Description | Use Case |
+|-------|--------|-------------|----------|
+| **yolo11n** *(default)* | YOLO | YOLO11 Nano — 22% fewer params than v8 | Best balance of speed & accuracy |
+| **yolo11s** | YOLO | YOLO11 Small — improved feature extraction | Higher accuracy, still fast |
+| **yolo11m** | YOLO | YOLO11 Medium — 51.5 mAP | Maximum YOLO accuracy |
+| **yolov8n** | YOLO | YOLOv8 Nano — 6.5 GFLOPS | Ultra-lightweight, legacy compat |
+| **yolov8s** | YOLO | YOLOv8 Small — balanced | Moderate resource environments |
+| **rtdetr-l** | RT-DETR | RT-DETR Large — transformer-based | High accuracy, GPU recommended |
+| **rtdetr-x** | RT-DETR | RT-DETR XLarge — max accuracy | Best accuracy, requires GPU |
+
+Model weights are auto-downloaded on first use. The `DetectionEngine` class handles thread-safe loading with zero-downtime swaps.
 
 ### Analytics
 
@@ -240,6 +258,13 @@ Defined in `proto/vigil.proto`:
 | `/api/reports/generate` | GET | Generate PDF report |
 | `/api/recordings` | GET | List recordings |
 
+### AI Models
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ai/models` | GET | List all supported models + active model |
+| `/api/ai/models/switch` | POST | Switch AI model at runtime (`{"model_id": "yolo11n"}`) |
+
 ### Settings
 
 | Endpoint | Method | Description |
@@ -273,7 +298,8 @@ VIGIL/
 │       │   ├── vigilStore.ts       # Main application state (Zustand)
 │       │   └── themeStore.ts       # Theme state + localStorage persistence
 │       ├── lib/
-│       │   └── api.ts              # REST API client
+│       │   ├── api.ts              # REST API client
+│       │   └── audioEngine.ts      # Web Audio API alarm engine
 │       └── components/
 │           ├── Header.tsx          # Top bar with vitals + theme toggle
 │           ├── TabNav.tsx          # Color-coded tab navigation
@@ -303,7 +329,7 @@ VIGIL/
 ├── reports/                        # Generated PDF reports
 ├── zones.json                      # Persisted zone configurations
 ├── violations.json                 # Violation history
-└── yolov8n.pt                      # YOLOv8n model weights
+└── *.pt                            # AI model weights (auto-downloaded)
 ```
 
 ---
