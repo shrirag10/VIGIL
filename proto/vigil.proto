@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package vigil;
+
+// ═══════════════════════════════════════════
+// VIGIL V7.0 — gRPC Service Definitions
+// Edge (Forklift) ↔ Central Server Protocol
+// ═══════════════════════════════════════════
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ── Core Data Types ──
+
+message BoundingBox {
+  int32 x1 = 1;
+  int32 y1 = 2;
+  int32 x2 = 3;
+  int32 y2 = 4;
+}
+
+message Detection {
+  int32 class_id = 1;        // 0=person, 88/89/90=barrier
+  string label = 2;          // "person", "barrier_red", etc.
+  float confidence = 3;
+  BoundingBox box = 4;
+  bool behind_barrier = 5;
+}
+
+message ZoneConfig {
+  string id = 1;
+  int32 camera_id = 2;
+  string name = 3;
+  string type = 4;           // "restricted", "warning", "safe"
+  BoundingBox rect = 5;
+  bool active = 6;
+}
+
+message ViolationEvent {
+  google.protobuf.Timestamp timestamp = 1;
+  int32 camera_id = 2;
+  string camera_name = 3;
+  string zone_id = 4;
+  string zone_name = 5;
+  string zone_type = 6;      // "restricted", "warning", "tamper"
+  BoundingBox person_box = 7;
+  string description = 8;
+}
+
+message TamperEvent {
+  google.protobuf.Timestamp timestamp = 1;
+  int32 camera_id = 2;
+  string tamper_type = 3;    // "BLOCKED", "DISCONNECTED", "COVERED"
+  string description = 4;
+  bool resolved = 5;
+}
+
+// ── Camera Frame Streaming ──
+
+message CameraFrame {
+  int32 camera_id = 1;
+  bytes jpeg_data = 2;          // JPEG-encoded frame
+  google.protobuf.Timestamp timestamp = 3;
+  int32 width = 4;
+  int32 height = 5;
+  int32 frame_number = 6;
+}
+
+message DetectionResult {
+  int32 camera_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  repeated Detection detections = 3;
+  int32 person_count = 4;
+  int32 barrier_count = 5;
+  int32 violation_count = 6;
+  repeated ViolationEvent violations = 7;
+  float processing_time_ms = 8;
+}
+
+// ── System Health ──
+
+message HealthStatus {
+  google.protobuf.Timestamp timestamp = 1;
+  string status = 2;            // "operational", "degraded", "offline"
+  float cpu_percent = 3;
+  float memory_percent = 4;
+  float temperature_c = 5;
+  int32 active_cameras = 6;
+  float average_fps = 7;
+  bool yolo_available = 8;
+  int64 uptime_seconds = 9;
+}
+
+message CameraStatus {
+  int32 camera_id = 1;
+  string name = 2;
+  bool active = 3;
+  bool recording = 4;
+  bool detection_enabled = 5;
+  float fps = 6;
+  int32 current_detections = 7;
+  int32 total_detections = 8;
+  bool tampered = 9;
+  string tamper_type = 10;
+}
+
+// ── Requests ──
+
+message CameraId {
+  int32 camera_id = 1;
+}
+
+message ViolationFilter {
+  optional int32 camera_id = 1;
+  optional string zone_type = 2;
+  int32 limit = 3;
+}
+
+message RecordingCommand {
+  int32 camera_id = 1;
+  bool start = 2;              // true=start, false=stop
+}
+
+message ZoneRequest {
+  int32 camera_id = 1;
+  ZoneConfig zone = 2;
+}
+
+message DetectionToggle {
+  int32 camera_id = 1;
+  bool enabled = 2;
+}
+
+message SystemPowerCommand {
+  bool enabled = 1;
+}
+
+// ── Responses ──
+
+message ZoneList {
+  repeated ZoneConfig zones = 1;
+}
+
+message CameraList {
+  repeated CameraStatus cameras = 1;
+}
+
+message OperationResult {
+  bool success = 1;
+  string message = 2;
+}
+
+// ═══════════════════════════════════════════
+// Service Definitions
+// ═══════════════════════════════════════════
+
+// Primary detection service — handles frame streaming
+// between edge device (forklift) and processing server
+service VIGILDetection {
+  // Bi-directional streaming: edge sends frames, server returns detection results
+  rpc StreamFrames(stream CameraFrame) returns (stream DetectionResult);
+
+  // Server-side streaming: subscribe to real-time violation events
+  rpc StreamViolations(ViolationFilter) returns (stream ViolationEvent);
+
+  // Server-side streaming: subscribe to tamper alerts
+  rpc StreamTamperAlerts(google.protobuf.Empty) returns (stream TamperEvent);
+
+  // Server-side streaming: continuous health monitoring
+  rpc StreamHealth(google.protobuf.Empty) returns (stream HealthStatus);
+}
+
+// Camera and zone management service
+service VIGILManagement {
+  // Camera management
+  rpc ListCameras(google.protobuf.Empty) returns (CameraList);
+  rpc GetCameraStatus(CameraId) returns (CameraStatus);
+  rpc ToggleDetection(DetectionToggle) returns (OperationResult);
+  rpc ToggleRecording(RecordingCommand) returns (OperationResult);
+
+  // Zone management
+  rpc ListZones(CameraId) returns (ZoneList);
+  rpc CreateZone(ZoneRequest) returns (OperationResult);
+  rpc DeleteZone(ZoneRequest) returns (OperationResult);
+
+  // System control
+  rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+  rpc SetSystemPower(SystemPowerCommand) returns (OperationResult);
+  rpc Shutdown(google.protobuf.Empty) returns (OperationResult);
+}

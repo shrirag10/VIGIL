@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═════════════════════════════════════════
+   VIGIL Theme System — 3 palettes
+   ═════════════════════════════════════════ */
+@layer base {
+  /* ── Dark (default) ── */
+  :root, .dark {
+    --v-bg: #0b0b11;
+    --v-surface: #131320;
+    --v-surface2: #1b1b30;
+    --v-surface3: #232340;
+    --v-border: #2a2a42;
+    --v-border-light: #3a3a55;
+    --v-text: #eaeaf2;
+    --v-text-secondary: #c0c0d5;
+    --v-dim: #7878a0;
+    --v-muted: #4e4e6a;
+    --v-accent: #f59e0b;
+    --v-accent-dim: rgba(245, 158, 11, 0.25);
+    --v-green: #22c55e;
+    --v-red: #ef4444;
+    --v-blue: #3b82f6;
+    --v-purple: #a855f7;
+    --v-cyan: #06b6d4;
+  }
+
+  /* ── Light ── */
+  .light {
+    --v-bg: #f0f2f5;
+    --v-surface: #ffffff;
+    --v-surface2: #f7f8fa;
+    --v-surface3: #eef0f4;
+    --v-border: #dde0e7;
+    --v-border-light: #c8ccd4;
+    --v-text: #1a1a2e;
+    --v-text-secondary: #3a3a50;
+    --v-dim: #6b6b85;
+    --v-muted: #999aaf;
+    --v-accent: #d97706;
+    --v-accent-dim: rgba(217, 119, 6, 0.15);
+    --v-green: #16a34a;
+    --v-red: #dc2626;
+    --v-blue: #2563eb;
+    --v-purple: #9333ea;
+    --v-cyan: #0891b2;
+  }
+
+  /* ── Midnight ── */
+  .midnight {
+    --v-bg: #020617;
+    --v-surface: #0f172a;
+    --v-surface2: #1e293b;
+    --v-surface3: #334155;
+    --v-border: #1e293b;
+    --v-border-light: #334155;
+    --v-text: #f1f5f9;
+    --v-text-secondary: #cbd5e1;
+    --v-dim: #64748b;
+    --v-muted: #475569;
+    --v-accent: #38bdf8;
+    --v-accent-dim: rgba(56, 189, 248, 0.2);
+    --v-green: #34d399;
+    --v-red: #f87171;
+    --v-blue: #60a5fa;
+    --v-purple: #c084fc;
+    --v-cyan: #22d3ee;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--v-border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--v-border-light); }
+
+  * { scrollbar-width: thin; scrollbar-color: var(--v-border) transparent; }
+}
+
+@layer components {
+  /* ── Cards ── */
+  .card {
+    @apply bg-vigil-surface border border-vigil-border rounded-vigil p-4
+           transition-colors duration-200;
+  }
+  .card-hover {
+    @apply card hover:border-vigil-border-light hover:shadow-vigil;
+  }
+  .card-sm {
+    @apply bg-vigil-surface border border-vigil-border rounded-vigil-sm p-3
+           transition-colors duration-200;
+  }
+  .card-interactive {
+    @apply card cursor-pointer hover:border-vigil-accent hover:shadow-vigil-glow
+           transition-all duration-200;
+  }
+  .card-glass {
+    @apply backdrop-blur-md border border-vigil-border rounded-vigil p-4;
+    background: color-mix(in srgb, var(--v-surface) 80%, transparent);
+  }
+
+  /* ── Stats ── */
+  .stat-value {
+    @apply text-2xl font-bold tabular-nums tracking-tight;
+  }
+  .stat-label {
+    @apply text-[10px] font-semibold text-vigil-dim uppercase tracking-[0.08em];
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 font-semibold text-sm
+           rounded-vigil-sm transition-all duration-200 disabled:opacity-50
+           disabled:pointer-events-none select-none;
+  }
+  .btn-primary {
+    @apply btn px-4 py-2 bg-vigil-accent text-black
+           hover:brightness-110 active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply btn px-4 py-2 bg-vigil-surface2 border border-vigil-border text-vigil-text
+           hover:bg-vigil-surface3 hover:border-vigil-border-light;
+  }
+  .btn-ghost {
+    @apply btn px-3 py-1.5 text-vigil-dim border border-transparent
+           hover:text-vigil-text hover:bg-vigil-surface2 hover:border-vigil-border;
+  }
+  .btn-danger {
+    @apply btn px-4 py-2 text-vigil-red;
+    background: color-mix(in srgb, var(--v-red) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--v-red) 30%, transparent);
+  }
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--v-red) 20%, transparent);
+    border-color: color-mix(in srgb, var(--v-red) 50%, transparent);
+  }
+  .btn-icon {
+    @apply btn w-8 h-8 p-0 border border-vigil-border bg-vigil-surface2
+           text-vigil-dim hover:text-vigil-text hover:border-vigil-border-light;
+  }
+
+  /* ── Badges ── */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]
+           font-bold uppercase tracking-wider;
+  }
+  .badge-green  { @apply badge text-vigil-green;  background: color-mix(in srgb, var(--v-green) 15%, transparent); }
+  .badge-red    { @apply badge text-vigil-red;    background: color-mix(in srgb, var(--v-red) 15%, transparent); }
+  .badge-amber  { @apply badge text-vigil-accent; background: color-mix(in srgb, var(--v-accent) 15%, transparent); }
+  .badge-blue   { @apply badge text-vigil-blue;   background: color-mix(in srgb, var(--v-blue) 15%, transparent); }
+  .badge-purple { @apply badge text-vigil-purple; background: color-mix(in srgb, var(--v-purple) 15%, transparent); }
+  .badge-cyan   { @apply badge text-vigil-cyan;   background: color-mix(in srgb, var(--v-cyan) 15%, transparent); }
+
+  /* ── Status indicator ── */
+  .status-dot {
+    @apply w-2 h-2 rounded-full shrink-0;
+  }
+  .status-dot-active {
+    @apply status-dot bg-vigil-green;
+    box-shadow: 0 0 6px color-mix(in srgb, var(--v-green) 50%, transparent);
+  }
+  .status-dot-inactive {
+    @apply status-dot bg-vigil-red;
+  }
+  .status-dot-warning {
+    @apply status-dot bg-vigil-accent animate-pulse;
+  }
+
+  /* ── Input ── */
+  .input {
+    @apply w-full px-3 py-2 bg-vigil-surface2 border border-vigil-border
+           rounded-vigil-sm text-sm text-vigil-text placeholder:text-vigil-muted
+           outline-none focus:border-vigil-accent focus:ring-1 focus:ring-vigil-accent
+           transition-colors duration-200;
+  }
+  .select {
+    @apply input appearance-none cursor-pointer;
+  }
+
+  /* ── Toggle switch ── */
+  .toggle {
+    @apply w-11 h-6 rounded-full relative cursor-pointer transition-colors duration-200;
+  }
+  .toggle-thumb {
+    @apply absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all duration-200;
+  }
+
+  /* ── Section headings ── */
+  .section-title {
+    @apply text-[11px] font-bold text-vigil-dim uppercase tracking-[0.1em];
+  }
+
+  /* ── Special effects ── */
+  .recording-active {
+    animation: recPulse 1.2s ease-in-out infinite;
+  }
+  .tamper-warning {
+    animation: tamper-alert 0.5s infinite;
+    border-width: 3px;
+    border-color: var(--v-red) !important;
+  }
+
+  @keyframes recPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  }
+
+  @keyframes tamper-alert {
+    0%, 100% { border-color: var(--v-red); box-shadow: 0 0 10px rgba(239,68,68,0.5); }
+    50% { border-color: var(--v-accent); box-shadow: 0 0 20px var(--v-accent-dim); }
+  }
+}

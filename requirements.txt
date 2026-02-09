@@ -1,0 +1,17 @@
+# VIGIL V7.0 — Python Dependencies
+# Core
+fastapi>=0.124.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+ultralytics>=8.2.0
+reportlab>=4.1.0
+psutil>=5.9.0
+
+# gRPC (optional — for edge-to-server streaming)
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
+
+# Kafka (optional — for event-driven architecture)
+kafka-python>=2.0.2

@@ -7,6 +7,7 @@ __pycache__/
 dist/
 build/
 venv/
+.venv/
 .env
 
 # YOLO model weights (large binary)
@@ -17,6 +18,9 @@ zones.json
 violations.json
 recordings/
 reports/
+
+# Node / Frontend
+node_modules/
 
 # OS
 .DS_Store
