@@ -48,7 +48,7 @@ RUN mkdir -p services/generated && \
 # Copy application code
 COPY VIGIL.py .
 COPY services/ services/
-COPY zones.json violations.json ./
+RUN echo '[]' > zones.json && echo '[]' > violations.json
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/static/ static/
