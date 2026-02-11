@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
-          path: ../static/
+          path: static/
           retention-days: 7
 
   # ────────────────────────────────────────
