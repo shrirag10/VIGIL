@@ -21,7 +21,7 @@ LABEL description="VIGIL V7.0 — Vehicle-Installed Guard for Injury Limitation"
 
 # System dependencies for OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -38,10 +38,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proto/ proto/
 RUN mkdir -p services/generated && \
     python -m grpc_tools.protoc \
-        -I proto \
-        --python_out=services/generated \
-        --grpc_python_out=services/generated \
-        proto/vigil.proto && \
+    -I proto \
+    --python_out=services/generated \
+    --grpc_python_out=services/generated \
+    proto/vigil.proto && \
     touch services/__init__.py services/generated/__init__.py && \
     sed -i 's/import vigil_pb2/from services.generated import vigil_pb2/' services/generated/vigil_pb2_grpc.py || true
 
