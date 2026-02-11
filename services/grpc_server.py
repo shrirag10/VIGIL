@@ -8,18 +8,18 @@ Usage:
     # or imported by VIGIL.py as a background thread
 """
 
-import grpc
-from concurrent import futures
-from google.protobuf.timestamp_pb2 import Timestamp
-from google.protobuf import empty_pb2
-import time
 import logging
+import queue
+import sys
 import threading
-import asyncio
+import time
+from concurrent import futures
 from datetime import datetime
 from pathlib import Path
-import sys
-import queue
+
+import grpc
+from google.protobuf import empty_pb2
+from google.protobuf.timestamp_pb2 import Timestamp
 
 # Add parent to path so we can import from VIGIL
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -273,7 +273,7 @@ if GRPC_STUBS_AVAILABLE:
             """List all cameras with current status."""
             cameras_list = vigil_pb2.CameraList()
             try:
-                from VIGIL import cameras, camera_stats, camera_settings
+                from VIGIL import camera_settings, camera_stats, cameras
                 for cam_id, cam_info in cameras.items():
                     stats = camera_stats.get(cam_id, {})
                     settings = camera_settings.get(cam_id, {})
@@ -316,7 +316,7 @@ if GRPC_STUBS_AVAILABLE:
         def ToggleRecording(self, request, context):
             """Toggle recording for a camera."""
             try:
-                from VIGIL import start_recording, stop_recording, cameras
+                from VIGIL import cameras, start_recording, stop_recording
                 if request.start:
                     start_recording(request.camera_id)
                     cameras[request.camera_id]['recording'] = True
@@ -359,7 +359,7 @@ if GRPC_STUBS_AVAILABLE:
         def SetSystemPower(self, request, context):
             """Toggle system power."""
             try:
-                from VIGIL import system_stats, camera_settings
+                from VIGIL import camera_settings, system_stats
                 system_stats['system_enabled'] = request.enabled
                 for cam_id in camera_settings:
                     camera_settings[cam_id]['detection_enabled'] = request.enabled
@@ -372,7 +372,8 @@ if GRPC_STUBS_AVAILABLE:
 
         def Shutdown(self, request, context):
             """Shutdown the system."""
-            import os, signal
+            import os
+            import signal
             logger.info("gRPC Shutdown requested")
             os.kill(os.getpid(), signal.SIGTERM)
             return vigil_pb2.OperationResult(success=True, message="Shutting down")

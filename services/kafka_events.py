@@ -20,7 +20,7 @@ import json
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger('VIGIL_KAFKA')
 
@@ -33,7 +33,7 @@ TOPIC_RECORDING  = 'vigil.recording-commands'
 
 # Try to import Kafka
 try:
-    from kafka import KafkaProducer, KafkaConsumer, KafkaAdminClient
+    from kafka import KafkaAdminClient, KafkaConsumer, KafkaProducer
     from kafka.admin import NewTopic
     from kafka.errors import TopicAlreadyExistsError
     KAFKA_AVAILABLE = True
@@ -62,7 +62,7 @@ class VIGILKafkaProducer:
         enabled: bool = True,
     ):
         self.enabled = enabled and KAFKA_AVAILABLE
-        self.producer: Optional[Any] = None
+        self.producer: Any | None = None
         self._connected = False
 
         if not self.enabled:
@@ -105,7 +105,7 @@ class VIGILKafkaProducer:
         except Exception as e:
             logger.debug(f"Topic creation note: {e}")
 
-    def _publish(self, topic: str, key: str, data: Dict[str, Any]):
+    def _publish(self, topic: str, key: str, data: dict[str, Any]):
         """Internal publish with error handling."""
         if not self.enabled or not self.producer:
             return
@@ -130,7 +130,7 @@ class VIGILKafkaProducer:
             'fps': fps,
         })
 
-    def publish_violation(self, violation: Dict[str, Any]):
+    def publish_violation(self, violation: dict[str, Any]):
         """Publish a zone violation event."""
         camera_id = violation.get('camera_id', 0)
         self._publish(TOPIC_VIOLATIONS, f'cam-{camera_id}', {
@@ -152,7 +152,7 @@ class VIGILKafkaProducer:
             'description': description,
         })
 
-    def publish_system_metrics(self, metrics: Dict[str, Any]):
+    def publish_system_metrics(self, metrics: dict[str, Any]):
         """Publish periodic system health metrics."""
         self._publish(TOPIC_METRICS, 'system', {
             'timestamp': datetime.now().isoformat(),
@@ -192,10 +192,10 @@ class VIGILKafkaConsumer:
         group_id: str = 'vigil-consumer',
         bootstrap_servers: str = 'localhost:9092',
     ):
-        self.handlers: Dict[str, list] = {}
-        self.consumer: Optional[Any] = None
+        self.handlers: dict[str, list] = {}
+        self.consumer: Any | None = None
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         if not KAFKA_AVAILABLE:
             logger.info("Kafka consumer disabled (library not available)")
@@ -277,14 +277,14 @@ class AlertConsumer:
         self.consumer.on(TOPIC_VIOLATIONS, self._handle_violation)
         self.consumer.on(TOPIC_TAMPER, self._handle_tamper)
 
-    def _handle_violation(self, event: Dict):
+    def _handle_violation(self, event: dict):
         """Handle violation event — send alerts."""
         zone_type = event.get('zone_type', '')
         camera_name = event.get('camera_name', '')
         logger.info(f"ALERT: {zone_type.upper()} violation on {camera_name}")
         # TODO: Integrate with email, ESP32 buzzer, push notifications
 
-    def _handle_tamper(self, event: Dict):
+    def _handle_tamper(self, event: dict):
         """Handle tamper event — send urgent alerts."""
         tamper_type = event.get('tamper_type', '')
         camera_id = event.get('camera_id', '')
@@ -313,16 +313,16 @@ class AnalyticsConsumer:
         self.consumer.on(TOPIC_METRICS, self._handle_metrics)
 
         # Aggregation state
-        self.detection_counts: Dict[int, int] = {}
+        self.detection_counts: dict[int, int] = {}
         self.total_processed = 0
 
-    def _handle_detection(self, event: Dict):
+    def _handle_detection(self, event: dict):
         """Aggregate detection stats."""
         cam_id = event.get('camera_id', 0)
         self.detection_counts[cam_id] = self.detection_counts.get(cam_id, 0) + event.get('person_count', 0)
         self.total_processed += 1
 
-    def _handle_metrics(self, event: Dict):
+    def _handle_metrics(self, event: dict):
         """Process system metrics."""
         # Could push to time-series DB (TimescaleDB, InfluxDB)
         pass

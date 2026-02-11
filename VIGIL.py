@@ -5,34 +5,34 @@ Architecture: React Frontend + FastAPI + gRPC + Kafka Event Bus
 Features: Multi-Camera Grid, Zone Management, Real-time Analytics, Settings
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, FileResponse
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-import cv2
-import numpy as np
+import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
-from pathlib import Path
 import threading
 import time
-from collections import deque, defaultdict
-import asyncio
-import io
-import base64
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 # ── gRPC & Kafka integration ──
 try:
-    from services.grpc_server import start_grpc_server, stop_grpc_server, event_bus
+    from services.grpc_server import event_bus, start_grpc_server, stop_grpc_server
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
 
 try:
-    from services.kafka_events import VIGILKafkaProducer, KAFKA_AVAILABLE as _KAFKA_LIB
+    from services.kafka_events import KAFKA_AVAILABLE as _KAFKA_LIB
+    from services.kafka_events import VIGILKafkaProducer
     KAFKA_AVAILABLE = _KAFKA_LIB
 except ImportError:
     KAFKA_AVAILABLE = False
@@ -141,14 +141,14 @@ class DetectionEngine:
 
 # Try to import PDF generation library
 try:
+    from reportlab.graphics.charts.barcharts import VerticalBarChart  # noqa: F401
+    from reportlab.graphics.charts.piecharts import Pie  # noqa: F401
+    from reportlab.graphics.shapes import Drawing  # noqa: F401
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.pagesizes import A4, letter  # noqa: F401
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-    from reportlab.graphics.shapes import Drawing
-    from reportlab.graphics.charts.barcharts import VerticalBarChart
-    from reportlab.graphics.charts.piecharts import Pie
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle  # noqa: F401
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
@@ -344,7 +344,7 @@ class Zone(BaseModel):
     camera_id: int
     name: str
     type: str  # restricted, warning, safe
-    points: List[List[float]]
+    points: list[list[float]]
     active: bool = True
 
 
@@ -369,7 +369,7 @@ def load_zones():
     global camera_zones
     try:
         if ZONES_FILE.exists():
-            with open(ZONES_FILE, 'r') as f:
+            with open(ZONES_FILE) as f:
                 data = json.load(f)
                 camera_zones = defaultdict(list, {int(k): v for k, v in data.items()})
                 logger.info(f"Loaded {sum(len(v) for v in camera_zones.values())} zones from {ZONES_FILE}")
@@ -394,7 +394,7 @@ def load_violations():
     global violations_log
     try:
         if VIOLATIONS_FILE.exists():
-            with open(VIOLATIONS_FILE, 'r') as f:
+            with open(VIOLATIONS_FILE) as f:
                 data = json.load(f)
                 violations_log = deque(data, maxlen=500)
                 logger.info(f"Loaded {len(violations_log)} violations from {VIOLATIONS_FILE}")
@@ -419,29 +419,29 @@ def save_violations():
 def start_recording(camera_id: int):
     """Start recording for a specific camera"""
     global camera_recorders, recording_info
-    
+
     if camera_id in camera_recorders and camera_recorders[camera_id] is not None:
         logger.warning(f"Camera {camera_id} is already recording")
         return False
-    
+
     try:
         # Create filename with timestamp
         start_time = datetime.now()
         filename = f"camera_{camera_id}_{start_time.strftime('%Y%m%d_%H%M%S')}.mp4"
         filepath = RECORDINGS_DIR / filename
-        
+
         # Get video properties
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         fps = 20.0  # Recording FPS
         frame_size = (480, 360)  # Match processed frame size
-        
+
         # Create VideoWriter
         writer = cv2.VideoWriter(str(filepath), fourcc, fps, frame_size)
-        
+
         if not writer.isOpened():
             logger.error(f"Failed to create video writer for camera {camera_id}")
             return False
-        
+
         camera_recorders[camera_id] = writer
         recording_info[camera_id] = {
             'start_time': start_time,
@@ -449,10 +449,10 @@ def start_recording(camera_id: int):
             'filepath': str(filepath),
             'frame_count': 0
         }
-        
+
         logger.info(f"Started recording camera {camera_id} to {filepath}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to start recording for camera {camera_id}: {e}")
         return False
@@ -461,20 +461,20 @@ def start_recording(camera_id: int):
 def stop_recording(camera_id: int):
     """Stop recording for a specific camera"""
     global camera_recorders, recording_info
-    
+
     if camera_id not in camera_recorders or camera_recorders[camera_id] is None:
         logger.warning(f"Camera {camera_id} is not recording")
         return None
-    
+
     try:
         writer = camera_recorders[camera_id]
         writer.release()
-        
+
         info = recording_info.get(camera_id, {})
         end_time = datetime.now()
         start_time = info.get('start_time', end_time)
         duration = (end_time - start_time).total_seconds()
-        
+
         # Rename file to include end timestamp
         old_filepath = Path(info.get('filepath', ''))
         if old_filepath.exists():
@@ -483,16 +483,16 @@ def stop_recording(camera_id: int):
             old_filepath.rename(new_filepath)
             info['filepath'] = str(new_filepath)
             info['filename'] = new_filename
-        
+
         info['end_time'] = end_time
         info['duration'] = duration
-        
+
         camera_recorders[camera_id] = None
-        
+
         logger.info(f"Stopped recording camera {camera_id}. Duration: {duration:.1f}s, Frames: {info.get('frame_count', 0)}")
-        
+
         return info
-        
+
     except Exception as e:
         logger.error(f"Failed to stop recording for camera {camera_id}: {e}")
         camera_recorders[camera_id] = None
@@ -502,10 +502,10 @@ def stop_recording(camera_id: int):
 def write_frame_to_recording(camera_id: int, frame):
     """Write a frame to the recording if active"""
     global camera_recorders, recording_info
-    
+
     if camera_id not in camera_recorders or camera_recorders[camera_id] is None:
         return
-    
+
     try:
         writer = camera_recorders[camera_id]
         if writer is not None and writer.isOpened():
@@ -526,90 +526,90 @@ def check_tamper_detection(camera_id: int, frame, ret: bool):
     Returns tuple: (is_tampered, tamper_type, message)
     """
     global tamper_state, violations_log
-    
+
     if not TAMPER_DETECTION_CONFIG['enabled']:
         return False, None, None
-    
+
     current_time = time.time()
     state = tamper_state[camera_id]
-    
+
     # Check interval to avoid excessive processing
     check_interval = TAMPER_DETECTION_CONFIG.get('check_interval', 1.0)
     if state['last_check_time'] and (current_time - state['last_check_time']) < check_interval:
         return state['is_tampered'], state['tamper_type'], None
-    
+
     state['last_check_time'] = current_time
     warning_delay = TAMPER_DETECTION_CONFIG.get('warning_delay', 10)
-    
+
     # Check 1: Camera disconnected (no frame received)
     if not ret or frame is None:
         if state['disconnect_start'] is None:
             state['disconnect_start'] = current_time
             logger.warning(f"Camera {camera_id}: No frame detected, monitoring for disconnect...")
-        
+
         disconnect_duration = current_time - state['disconnect_start']
-        
+
         if disconnect_duration >= warning_delay and not state['warning_sent']:
             state['is_tampered'] = True
             state['tamper_type'] = 'DISCONNECTED'
             state['warning_sent'] = True
-            
+
             # Log tamper event
             log_tamper_event(camera_id, 'DISCONNECTED', f"Camera disconnected for {disconnect_duration:.0f}s")
-            
+
             return True, 'DISCONNECTED', f"⚠️ TAMPER ALERT: Camera {camera_id} DISCONNECTED for {disconnect_duration:.0f}s"
-        
+
         return state['is_tampered'], state['tamper_type'], None
     else:
         # Frame received, reset disconnect timer
         state['disconnect_start'] = None
-    
+
     # Check 2: Camera blocked/covered (darkness detection)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     avg_brightness = np.mean(gray)
     darkness_threshold = TAMPER_DETECTION_CONFIG.get('darkness_threshold', 25)
-    
+
     if avg_brightness < darkness_threshold:
         if state['darkness_start'] is None:
             state['darkness_start'] = current_time
             logger.warning(f"Camera {camera_id}: Low brightness detected ({avg_brightness:.1f}), monitoring...")
-        
+
         darkness_duration = current_time - state['darkness_start']
-        
+
         if darkness_duration >= warning_delay and not state['warning_sent']:
             state['is_tampered'] = True
             state['tamper_type'] = 'BLOCKED'
             state['warning_sent'] = True
-            
+
             # Log tamper event
             log_tamper_event(camera_id, 'BLOCKED', f"Camera appears blocked/covered (brightness: {avg_brightness:.1f})")
-            
+
             return True, 'BLOCKED', f"⚠️ TAMPER ALERT: Camera {camera_id} BLOCKED/COVERED for {darkness_duration:.0f}s"
-        
+
         return state['is_tampered'], state['tamper_type'], None
     else:
         # Brightness normal, reset darkness timer
         state['darkness_start'] = None
-    
+
     # Static image detection DISABLED - cameras may legitimately show static scenes
     # Only detect blocked (darkness) and disconnected cameras
-    
+
     # If we reach here, no tampering detected - reset state if was previously tampered
     if state['is_tampered']:
         logger.info(f"Camera {camera_id}: Tamper condition cleared")
         state['is_tampered'] = False
         state['tamper_type'] = None
         state['warning_sent'] = False
-    
+
     return False, None, None
 
 
 def log_tamper_event(camera_id: int, tamper_type: str, description: str):
     """Log a tamper event to violations"""
     global violations_log, event_log
-    
+
     timestamp = datetime.now()
-    
+
     tamper_event = {
         'timestamp': timestamp.isoformat(),
         'camera_id': camera_id,
@@ -619,7 +619,7 @@ def log_tamper_event(camera_id: int, tamper_type: str, description: str):
         'description': description,
         'severity': 'HIGH'
     }
-    
+
     violations_log.append(tamper_event)
     event_log.append({
         'timestamp': timestamp.isoformat(),
@@ -628,11 +628,11 @@ def log_tamper_event(camera_id: int, tamper_type: str, description: str):
         'description': f"TAMPER: {tamper_type} - {description}",
         'confidence': 1.0
     })
-    
+
     # Publish tamper to Kafka
     if kafka_producer and kafka_producer.enabled:
         kafka_producer.publish_tamper_alert(camera_id, tamper_type, description)
-    
+
     # Publish tamper to gRPC event bus
     if GRPC_AVAILABLE:
         try:
@@ -643,44 +643,44 @@ def log_tamper_event(camera_id: int, tamper_type: str, description: str):
             })
         except Exception:
             pass
-    
+
     # Save violations
     save_violations()
-    
+
     logger.warning(f"TAMPER EVENT logged: Camera {camera_id} - {tamper_type}: {description}")
 
 
 def draw_tamper_warning(frame, camera_id):
     """Draw tamper warning overlay on frame"""
     state = tamper_state[camera_id]
-    
+
     if not state['is_tampered']:
         return frame
-    
+
     h, w = frame.shape[:2]
-    
+
     # Red border
     cv2.rectangle(frame, (0, 0), (w-1, h-1), (0, 0, 255), 8)
-    
+
     # Warning overlay
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h//3), (w, 2*h//3), (0, 0, 200), -1)
     cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-    
+
     # Warning text
     tamper_type = state['tamper_type'] or 'TAMPERED'
     warning_text = f"⚠️ CAMERA {tamper_type} ⚠️"
     text_size = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
     text_x = (w - text_size[0]) // 2
     text_y = h // 2
-    
+
     cv2.putText(frame, warning_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    
+
     # Blinking effect using timestamp
     if int(time.time() * 2) % 2 == 0:
-        cv2.putText(frame, "CHECK CAMERA IMMEDIATELY", (w//4 - 40, text_y + 30), 
+        cv2.putText(frame, "CHECK CAMERA IMMEDIATELY", (w//4 - 40, text_y + 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-    
+
     return frame
 
 
@@ -688,18 +688,18 @@ def draw_tamper_warning(frame, camera_id):
 async def startup_event():
     """Initialize cameras, detection engine, gRPC, and Kafka on startup"""
     global detection_engine, system_stats, kafka_producer
-    
+
     logger.info("="*70)
     logger.info("VIGIL V7.0 Professional - Complete System Initialization")
     logger.info("  Architecture: React + FastAPI + gRPC + Kafka")
     logger.info("="*70)
-    
+
     system_stats['start_time'] = datetime.now()
-    
+
     # Load persisted data
     load_zones()
     load_violations()
-    
+
     # Initialize multi-model detection engine
     detection_engine = DetectionEngine()
     if YOLO_AVAILABLE or RTDETR_AVAILABLE:
@@ -714,10 +714,10 @@ async def startup_event():
             logger.warning("Detection engine failed to load — running without AI")
     else:
         logger.warning("Ultralytics not installed — running without AI detection")
-    
+
     # Initialize cameras
     initialize_cameras()
-    
+
     # ── Start gRPC server ──
     if GRPC_AVAILABLE:
         try:
@@ -730,7 +730,7 @@ async def startup_event():
             logger.warning(f"gRPC server failed to start: {e}")
     else:
         logger.info("gRPC not available — install grpcio grpcio-tools")
-    
+
     # ── Start Kafka producer ──
     if KAFKA_AVAILABLE:
         try:
@@ -747,7 +747,7 @@ async def startup_event():
             kafka_producer = None
     else:
         logger.info("Kafka not available — install kafka-python")
-    
+
     logger.info("System ready — Dashboard at http://localhost:8000")
     logger.info("="*70)
 
@@ -755,44 +755,44 @@ async def startup_event():
 def camera_capture_thread(camera_id):
     """Background thread to continuously capture and process frames"""
     global cameras, camera_frames, frame_ready_events, camera_stats, fps_history
-    
+
     logger.info(f"Starting capture thread for Camera {camera_id}")
-    
+
     fps_start = time.time()
     frame_count = 0
-    
+
     while cameras.get(camera_id, {}).get('running', False):
         try:
             camera = cameras[camera_id]
             cap = camera['capture']
-            
+
             ret, frame = cap.read()
-            
+
             # Check for tampering (including disconnection)
             is_tampered, tamper_type, tamper_msg = check_tamper_detection(camera_id, frame, ret)
-            
+
             if ret and frame is not None:
                 # Resize for performance
                 frame = cv2.resize(frame, (480, 360))
-                
+
                 # Process frame with detection
                 processed_frame, detections, violations = process_frame_with_detection(frame, camera_id)
-                
+
                 if processed_frame is not None:
                     # Draw tamper warning if tampered
                     if is_tampered:
                         processed_frame = draw_tamper_warning(processed_frame, camera_id)
-                    
+
                     # Write to recording if active
                     if cameras[camera_id].get('recording', False):
                         write_frame_to_recording(camera_id, processed_frame)
-                    
+
                     # Encode frame to JPEG
                     encode_ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     if encode_ret:
                         camera_frames[camera_id] = buffer.tobytes()
                         frame_ready_events[camera_id].set()
-                
+
                 # Calculate FPS every 20 frames
                 frame_count += 1
                 if frame_count % 20 == 0:
@@ -801,7 +801,7 @@ def camera_capture_thread(camera_id):
                     camera_stats[camera_id]['fps'] = fps
                     fps_history[camera_id].append(fps)
                     fps_start = time.time()
-                    
+
             else:
                 # No frame - create error frame with tamper warning
                 error_frame = np.zeros((360, 480, 3), dtype=np.uint8)
@@ -813,33 +813,33 @@ def camera_capture_thread(camera_id):
                 camera_frames[camera_id] = buffer.tobytes()
                 frame_ready_events[camera_id].set()
                 time.sleep(0.5)
-                
+
             time.sleep(0.02)  # ~30 FPS target
-            
+
         except Exception as e:
             logger.error(f"Camera {camera_id} capture error: {e}")
             time.sleep(1)
-    
+
     logger.info(f"Capture thread for Camera {camera_id} stopped")
 
 
 def initialize_cameras():
     """Initialize camera feeds with smart detection"""
     global cameras, camera_stats
-    
+
     camera_positions = ['Front Left', 'Front Right', 'Rear Left', 'Rear Right']
-    
+
     # Detect working cameras
     available_cameras = []
     logger.info("Scanning for available camera devices...")
-    
+
     # Determine platform-specific backend
     import platform
     is_macos = platform.system() == 'Darwin'
     backend = cv2.CAP_AVFOUNDATION if is_macos else cv2.CAP_ANY
     backend_name = 'AVFoundation' if is_macos else 'default'
     logger.info(f"Using {backend_name} camera backend")
-    
+
     # Check devices 0-9 to find all cameras (primary video nodes vary based on USB enumeration)
     for device_idx in range(10):
         try:
@@ -850,10 +850,10 @@ def initialize_cameras():
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 cap.set(cv2.CAP_PROP_FPS, 30)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                
+
                 # Give camera time to warm up (especially needed on macOS)
                 time.sleep(0.5)
-                
+
                 # Test if camera actually works (read a few frames to warm up)
                 ret = False
                 frame = None
@@ -862,11 +862,11 @@ def initialize_cameras():
                     if ret and frame is not None:
                         break
                     time.sleep(0.2)
-                
+
                 if ret and frame is not None and frame.size > 0:
                     available_cameras.append({'idx': device_idx, 'cap': cap})
                     logger.info(f"Found working camera at device index {device_idx} ({frame.shape[1]}x{frame.shape[0]})")
-                    
+
                     # Stop at 4 cameras
                     if len(available_cameras) >= 4:
                         break
@@ -879,9 +879,9 @@ def initialize_cameras():
                     break
         except Exception as e:
             logger.debug(f"Camera {device_idx} error: {e}")
-    
+
     logger.info(f"Detected {len(available_cameras)} working camera(s): {[c['idx'] for c in available_cameras]}")
-    
+
     # Initialize cameras with background frame capture
     for logical_id in range(min(4, len(available_cameras))):
         cam_info = available_cameras[logical_id]
@@ -918,11 +918,11 @@ def initialize_cameras():
                 }
                 camera_frames[logical_id] = None
                 frame_ready_events[logical_id] = threading.Event()
-                
+
                 # Start background frame capture thread
                 thread = threading.Thread(target=camera_capture_thread, args=(logical_id,), daemon=True)
                 thread.start()
-                
+
                 logger.info(f"Camera {logical_id} ({cameras[logical_id]['position']}) mapped to device {device_idx}")
         except Exception as e:
             logger.error(f"Camera {logical_id} initialization error: {e}")
@@ -937,28 +937,28 @@ def point_in_rect(px, py, rect):
 def check_zone_violation(camera_id, person_x, person_y, person_box):
     """Check if person is violating any restricted zone"""
     global camera_zones, violations_log, camera_stats, esp32_buzzer_state
-    
+
     zones = camera_zones.get(camera_id, [])
-    
+
     for zone in zones:
         if not zone.get('active', True):
             continue
-        
+
         zone_type = zone.get('type', 'restricted')
         zone_rect = zone.get('rect', [])  # [x, y, width, height]
-        
+
         if len(zone_rect) == 4:
             # Check if person center is in zone
             if point_in_rect(person_x, person_y, zone_rect):
                 zone_name = zone.get('name', 'Unknown Zone')
                 zone_id = zone.get('id', f"{camera_id}_{zone_name}")
                 violation_key = f"{camera_id}_{zone_id}"
-                
+
                 # Handle different zone types
                 if zone_type == 'restricted':
                     # Track this active violation
                     esp32_buzzer_state['current_violations'].add(violation_key)
-                    
+
                     # Log violation
                     violation = {
                         'timestamp': datetime.now().isoformat(),
@@ -970,23 +970,23 @@ def check_zone_violation(camera_id, person_x, person_y, person_box):
                         'person_box': person_box
                     }
                     violations_log.append(violation)
-                    
+
                     # Publish violation to Kafka
                     if kafka_producer and kafka_producer.enabled:
                         kafka_producer.publish_violation(violation)
-                    
+
                     # Publish violation to gRPC event bus
                     if GRPC_AVAILABLE:
                         try:
                             event_bus.publish('violation', violation)
                         except Exception:
                             pass
-                    
+
                     # Update stats
                     camera_stats[camera_id]['violations'] = camera_stats[camera_id].get('violations', 0) + 1
                     with _state_lock:
                         system_stats['total_violations'] += 1
-                    
+
                     # Trigger ESP32 buzzer based on settings
                     if ESP32_BUZZER_CONFIG['enabled'] and ESP32_BUZZER_CONFIG['connected']:
                         sound = ESP32_BUZZER_SETTINGS.get('restricted_sound', 'continuous').upper()
@@ -996,16 +996,16 @@ def check_zone_violation(camera_id, person_x, person_y, person_box):
                             trigger_esp32_buzzer('SIREN')  # Siren sound
                         else:
                             trigger_esp32_buzzer('BEEP')  # Beep sound
-                    
+
                     # Debounced save to disk (avoids blocking capture thread)
                     _schedule_save_violations()
-                    
+
                     return {'zone_name': zone_name, 'zone_type': zone_type, 'violation': violation}
-                
+
                 elif zone_type == 'warning':
                     # Track warning zone violations too
                     esp32_buzzer_state['current_violations'].add(violation_key)
-                    
+
                     # Trigger ESP32 buzzer based on settings
                     if ESP32_BUZZER_CONFIG['enabled'] and ESP32_BUZZER_CONFIG['connected']:
                         sound = ESP32_BUZZER_SETTINGS.get('warning_sound', 'beep').upper()
@@ -1017,25 +1017,25 @@ def check_zone_violation(camera_id, person_x, person_y, person_box):
                             trigger_esp32_buzzer('BEEP')  # Beep sound
                     # Just return warning, don't log as violation
                     return {'zone_name': zone_name, 'zone_type': 'warning', 'alert_only': True}
-    
+
     return None
 
 
 def draw_zones_on_frame(frame, camera_id):
     """Draw all active zones on the camera frame"""
     zones = camera_zones.get(camera_id, [])
-    
+
     for zone in zones:
         if not zone.get('active', True):
             continue
-        
+
         zone_type = zone.get('type', 'restricted')
         zone_rect = zone.get('rect', [])  # [x, y, width, height]
         zone_name = zone.get('name', 'Zone')
-        
+
         if len(zone_rect) == 4:
             x, y, w, h = zone_rect
-            
+
             # Color based on type
             if zone_type == 'restricted':
                 color = (0, 0, 255)  # Red
@@ -1046,15 +1046,15 @@ def draw_zones_on_frame(frame, camera_id):
             else:  # safe
                 color = (0, 255, 0)  # Green
                 label_bg = (0, 200, 0)
-            
+
             # Draw rectangle
             cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            
+
             # Draw semi-transparent fill
             overlay = frame.copy()
             cv2.rectangle(overlay, (x, y), (x+w, y+h), color, -1)
             cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
-            
+
             # Draw label
             label = f"{zone_name} ({zone_type})"
             (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
@@ -1090,128 +1090,128 @@ def detect_industrial_barriers(frame):
     """
     if frame is None or not barrier_settings['enabled']:
         return []
-    
+
     barriers = []
     h, w = frame.shape[:2]
-    
+
     # Convert to HSV for better color detection
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    
+
     # Also get grayscale for edge detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
-    
+
     # Define STRICT color ranges for industrial barriers
     # Red color - very specific for industrial red (not clothing red)
     min_sat = barrier_settings['min_saturation']
     min_val = barrier_settings['min_value']
-    
+
     # Industrial red is very saturated and bright
     lower_red1 = np.array([0, min_sat, min_val])
     upper_red1 = np.array([6, 255, 255])  # Very narrow hue range
     lower_red2 = np.array([174, min_sat, min_val])  # Very narrow hue range
     upper_red2 = np.array([180, 255, 255])
-    
+
     # Industrial yellow - bright warning yellow only
     lower_yellow = np.array([22, min_sat + 40, min_val + 60])  # Very saturated yellow
     upper_yellow = np.array([32, 255, 255])
-    
+
     # Industrial orange - traffic cone orange
     lower_orange = np.array([12, min_sat + 30, min_val + 40])
     upper_orange = np.array([22, 255, 255])
-    
+
     # Create masks for each color
     mask_red1 = cv2.inRange(hsv, lower_red1, upper_red1)
     mask_red2 = cv2.inRange(hsv, lower_red2, upper_red2)
     mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
     mask_orange = cv2.inRange(hsv, lower_orange, upper_orange)
-    
+
     # Combine red masks
     mask_red = cv2.bitwise_or(mask_red1, mask_red2)
-    
+
     # Combine all warning color masks
     mask_combined = cv2.bitwise_or(mask_red, mask_yellow)
     mask_combined = cv2.bitwise_or(mask_combined, mask_orange)
-    
+
     # Morphological operations - aggressive noise removal
     kernel_small = np.ones((5, 5), np.uint8)
     kernel_medium = np.ones((7, 7), np.uint8)
-    
+
     # Remove noise first - more aggressive
     mask_combined = cv2.morphologyEx(mask_combined, cv2.MORPH_OPEN, kernel_small, iterations=3)
-    
+
     # Close small gaps
     mask_combined = cv2.morphologyEx(mask_combined, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
-    
+
     # Find contours - use original mask, not dilated (more precise)
     contours, _ = cv2.findContours(mask_combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
+
     for contour in contours:
         area = cv2.contourArea(contour)
-        
+
         # Filter by area - strict
         if area < barrier_settings['min_area'] or area > barrier_settings['max_area']:
             continue
-        
+
         # Get bounding rectangle
         x, y, bw, bh = cv2.boundingRect(contour)
-        
+
         # Filter by size
         if bw < barrier_settings['min_width'] or bh < barrier_settings['min_height']:
             continue
-        
+
         # Filter by aspect ratio - barriers are WIDER than tall (important to filter jackets)
         aspect_ratio = bw / bh if bh > 0 else 0
         if aspect_ratio < barrier_settings['aspect_ratio_min'] or aspect_ratio > barrier_settings['aspect_ratio_max']:
             continue
-        
+
         # VALIDATION 1: Check contour solidity (barriers are relatively solid shapes)
         hull = cv2.convexHull(contour)
         hull_area = cv2.contourArea(hull)
         solidity = area / hull_area if hull_area > 0 else 0
         if solidity < 0.4:  # Increased threshold - too fragmented likely not a barrier
             continue
-        
+
         # VALIDATION 2: Check color distribution in the ROI
         roi_red = mask_red[y:y+bh, x:x+bw]
         roi_yellow = mask_yellow[y:y+bh, x:x+bw]
         roi_orange = mask_orange[y:y+bh, x:x+bw]
-        
+
         red_pixels = cv2.countNonZero(roi_red)
         yellow_pixels = cv2.countNonZero(roi_yellow)
         orange_pixels = cv2.countNonZero(roi_orange)
         total_colored = red_pixels + yellow_pixels + orange_pixels
         roi_area = bw * bh
-        
+
         # Calculate color coverage percentage
         color_coverage = total_colored / roi_area if roi_area > 0 else 0
-        
+
         # Minimum coverage threshold - stricter
         if color_coverage < barrier_settings['min_color_coverage']:
             continue
-        
+
         # VALIDATION 3: Check edge density (barriers have defined edges/structure)
         roi_edges = edges[y:y+bh, x:x+bw]
         edge_pixels = cv2.countNonZero(roi_edges)
         edge_density = edge_pixels / roi_area if roi_area > 0 else 0
-        
+
         if edge_density < barrier_settings['edge_density_min']:
             continue  # Too smooth, might be a colored surface not a barrier
-        
+
         # VALIDATION 4: Check for rectangular shape (barriers are usually rectangular)
         rect = cv2.minAreaRect(contour)
         rect_area = rect[1][0] * rect[1][1]
         rectangularity = area / rect_area if rect_area > 0 else 0
-        
+
         if rectangularity < 0.5:  # Increased - must be more rectangular
             continue
-        
+
         # VALIDATION 5: Position check - barriers are typically in lower portion of frame
         center_y = y + bh / 2
         max_upper = barrier_settings.get('max_in_upper_frame', 0.25)
         if center_y < h * max_upper:  # Too high in frame, likely not a barrier
             continue
-        
+
         # VALIDATION 6: Check for stripe pattern (alternating colors)
         has_stripes = False
         stripe_score = 0
@@ -1222,25 +1222,25 @@ def detect_industrial_barriers(frame):
                 red_line = roi_red[mid_y, :]
                 yellow_line = roi_yellow[mid_y, :]
                 orange_line = roi_orange[mid_y, :]
-                
+
                 # Count color transitions (stripe pattern indicator)
                 combined_line = np.maximum(red_line, np.maximum(yellow_line, orange_line))
                 transitions = np.sum(np.abs(np.diff(combined_line > 0)))
                 min_alternations = barrier_settings.get('min_stripe_alternation', 3)
-                
+
                 if transitions >= min_alternations:
                     has_stripes = True
                     stripe_score = min(1.0, transitions / 10)
-        
+
         # VALIDATION 7: Reject if detection overlaps with person-shaped regions
         # Jackets are typically tall and narrow, barriers are wide and short
         if bh > bw * 0.8:  # If height is more than 80% of width, likely not a barrier
             continue
-        
+
         # Determine barrier type with stricter criteria
         is_striped = has_stripes or ((red_pixels > 500 and yellow_pixels > 500) or \
                      (red_pixels > 500 and orange_pixels > 500))
-        
+
         # Calculate confidence with multiple factors
         if is_striped:
             barrier_type = "STRIPED"
@@ -1254,16 +1254,16 @@ def detect_industrial_barriers(frame):
         else:
             barrier_type = "YELLOW"
             confidence = min(1.0, (yellow_pixels / roi_area) * 2.5 + rectangularity * 0.3)
-        
+
         # Only accept high-confidence detections - stricter threshold
         if confidence < 0.45:
             continue
-        
+
         # Prefer striped barriers if configured
         if barrier_settings.get('require_stripe_pattern', False) and not is_striped:
             if confidence < 0.6:  # Non-striped needs higher confidence
                 continue
-        
+
         barriers.append({
             'box': (x, y, x + bw, y + bh),
             'area': area,
@@ -1275,10 +1275,10 @@ def detect_industrial_barriers(frame):
             'rectangularity': rectangularity,
             'has_stripes': has_stripes
         })
-    
+
     # Remove overlapping detections (keep highest confidence)
     barriers = remove_overlapping_barriers(barriers)
-    
+
     return barriers
 
 
@@ -1286,36 +1286,36 @@ def remove_overlapping_barriers(barriers):
     """Remove overlapping barrier detections, keeping the highest confidence ones."""
     if len(barriers) <= 1:
         return barriers
-    
+
     # Sort by confidence (highest first)
     barriers = sorted(barriers, key=lambda x: x.get('confidence', 0), reverse=True)
-    
+
     filtered = []
     for barrier in barriers:
         bx1, by1, bx2, by2 = barrier['box']
-        
+
         is_overlapping = False
         for existing in filtered:
             ex1, ey1, ex2, ey2 = existing['box']
-            
+
             # Calculate intersection
             ix1 = max(bx1, ex1)
             iy1 = max(by1, ey1)
             ix2 = min(bx2, ex2)
             iy2 = min(by2, ey2)
-            
+
             if ix1 < ix2 and iy1 < iy2:
                 intersection = (ix2 - ix1) * (iy2 - iy1)
                 barrier_area = (bx2 - bx1) * (by2 - by1)
                 overlap_ratio = intersection / barrier_area if barrier_area > 0 else 0
-                
+
                 if overlap_ratio > 0.5:  # More than 50% overlap
                     is_overlapping = True
                     break
-        
+
         if not is_overlapping:
             filtered.append(barrier)
-    
+
     return filtered
 
 
@@ -1329,44 +1329,44 @@ def is_person_behind_barrier(person_box, barriers, frame_height):
     person_center_y = (py1 + py2) / 2
     person_bottom_y = py2
     person_height = py2 - py1
-    
+
     for barrier in barriers:
         bx1, by1, bx2, by2 = barrier['box']
         barrier_center_y = (by1 + by2) / 2
         barrier_height = by2 - by1
-        
+
         # Check horizontal overlap
         horizontal_overlap = not (px2 < bx1 or px1 > bx2)
-        
+
         if not horizontal_overlap:
             continue
-        
+
         # Calculate overlap amount
         overlap_left = max(px1, bx1)
         overlap_right = min(px2, bx2)
         overlap_width = overlap_right - overlap_left
         person_width = px2 - px1
         overlap_ratio = overlap_width / person_width if person_width > 0 else 0
-        
+
         # Person is considered behind barrier if:
         # 1. Significant horizontal overlap (>30%)
         # 2. Person's bottom is at or above barrier center (they're "behind" it)
         # 3. Or person appears to be physically behind the barrier plane
-        
+
         if overlap_ratio > 0.3:
             # Check vertical relationship
             # If person bottom is above barrier center + some tolerance
             vertical_tolerance = barrier_height * 0.5
-            
+
             if person_bottom_y <= barrier_center_y + vertical_tolerance:
                 return True, barrier
-            
-            # Alternative: if person is significantly smaller (further away) 
+
+            # Alternative: if person is significantly smaller (further away)
             # and overlaps with barrier
             expected_near_height = frame_height * 0.4  # Expected height if close
             if person_height < expected_near_height * 0.5 and overlap_ratio > 0.5:
                 return True, barrier
-    
+
     return False, None
 
 
@@ -1377,29 +1377,29 @@ def process_frame_with_detection(frame, camera_id):
     """Process frame with YOLO detection, barrier detection, and filtering - OPTIMIZED"""
     global detection_engine, camera_stats, detection_history, system_stats, event_log
     global current_frame_violations, esp32_buzzer_state
-    
+
     if frame is None:
         return None, 0, 0
-    
+
     h, w = frame.shape[:2]
-    
+
     # Draw zones first (so they appear behind detections)
     draw_zones_on_frame(frame, camera_id)
-    
+
     detections = 0
     violations = 0
     barriers_detected = 0
-    
+
     try:
         # STEP 1: Detect industrial barriers using color analysis (red/yellow)
         color_barriers = detect_industrial_barriers(frame)
-        
+
         # Draw detected color-based barriers
         for barrier in color_barriers:
             bx1, by1, bx2, by2 = barrier['box']
             barrier_type = barrier['type']
             barriers_detected += 1
-            
+
             # Color based on barrier type
             if barrier_type == "STRIPED":
                 # Orange color for striped red/yellow barriers
@@ -1411,35 +1411,35 @@ def process_frame_with_detection(frame, camera_id):
             else:  # YELLOW
                 color = (0, 255, 255)  # Yellow in BGR
                 label = "⚠ BARRIER (YELLOW)"
-            
+
             # Draw barrier box with thick border
             cv2.rectangle(frame, (bx1, by1), (bx2, by2), color, 3)
-            
+
             # Draw diagonal stripes pattern to indicate barrier
             stripe_spacing = 15
             for i in range(bx1, bx2, stripe_spacing):
                 cv2.line(frame, (i, by1), (min(i + (by2 - by1), bx2), by2), color, 1)
-            
+
             # Label with background
             (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
             cv2.rectangle(frame, (bx1, by1 - label_h - 8), (bx1 + label_w + 8, by1), color, -1)
             cv2.putText(frame, label, (bx1 + 4, by1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        
+
         if detection_engine and detection_engine.available and camera_settings.get(camera_id, {}).get('detection_enabled', True):
             # Run detection with the active model
             results = detection_engine.predict(frame, conf=0.5, imgsz=320)
-            
+
             # Collect YOLO-detected barriers (fence, wall, etc.) as backup
             yolo_barriers = []
             person_boxes = []
-            
+
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
                     cls = int(box.cls[0])
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     conf = float(box.conf[0])
-                    
+
                     # YOLO barrier classes (fence, wall, etc.)
                     if cls in [88, 89, 90]:
                         yolo_barriers.append({
@@ -1451,56 +1451,56 @@ def process_frame_with_detection(frame, camera_id):
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 165, 0), 2)
                         cv2.putText(frame, 'FENCE/BARRIER', (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 165, 0), 1)
                         barriers_detected += 1
-                    
+
                     # Collect persons
                     elif cls == 0:  # Person class
                         person_boxes.append({
                             'box': (x1, y1, x2, y2),
                             'conf': conf
                         })
-            
+
             # Combine all barriers (color-detected + YOLO-detected)
             all_barriers = color_barriers + yolo_barriers
-            
+
             # Process each detected person
             for person in person_boxes:
                 px1, py1, px2, py2 = person['box']
                 person_center_x = (px1 + px2) / 2
                 person_center_y = (py1 + py2) / 2
-                
+
                 # Check if person is behind any barrier using enhanced detection
                 is_behind, blocking_barrier = is_person_behind_barrier(person['box'], all_barriers, h)
-                
+
                 if not is_behind:
                     # Count and draw visible persons
                     detections += 1
-                    
+
                     # Check if person is in any zone
                     zone_violation = check_zone_violation(camera_id, person_center_x, person_center_y, person['box'])
-                    
+
                     if zone_violation:
                         violations += 1
                         # Draw in RED for violation
                         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 3)
-                        cv2.putText(frame, f'VIOLATION: {zone_violation["zone_name"]}', (px1, py1-5), 
+                        cv2.putText(frame, f'VIOLATION: {zone_violation["zone_name"]}', (px1, py1-5),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 2)
                     else:
                         # Normal detection - green box
                         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 0), 2)
-                        cv2.putText(frame, f'Person {person["conf"]:.2f}', (px1, py1-5), 
+                        cv2.putText(frame, f'Person {person["conf"]:.2f}', (px1, py1-5),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
                 else:
                     # Draw ignored persons in gray with reason
                     cv2.rectangle(frame, (px1, py1), (px2, py2), (128, 128, 128), 1)
                     barrier_type = blocking_barrier.get('type', 'BARRIER') if blocking_barrier else 'BARRIER'
-                    cv2.putText(frame, f'BEHIND {barrier_type}', (px1, py1-5), 
+                    cv2.putText(frame, f'BEHIND {barrier_type}', (px1, py1-5),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (128, 128, 128), 1)
-            
+
             # Update stats (throttled)
             camera_stats[camera_id]['detections'] = detections
             camera_stats[camera_id]['total_detections'] += detections
             camera_stats[camera_id]['barriers'] = barriers_detected
-            
+
             # Update history every 2 seconds only
             now = datetime.now()
             if len(detection_history[camera_id]) == 0 or \
@@ -1510,19 +1510,19 @@ def process_frame_with_detection(frame, camera_id):
                     '_dt': now,
                     'count': detections
                 })
-            
+
             with _state_lock:
                 system_stats['total_detections'] += detections
                 if detections > system_stats['peak_detections']:
                     system_stats['peak_detections'] = detections
-        
+
         # Lightweight overlay with barrier count
         add_professional_overlay(frame, camera_id, detections, violations, barriers_detected)
-        
+
         # Update last violation time if we detected violations this frame
         if violations > 0:
             esp32_buzzer_state['last_violation_time'] = time.time()
-        
+
         # Check if buzzer should stop (no violations for timeout period)
         if ESP32_BUZZER_CONFIG['enabled'] and ESP32_BUZZER_CONFIG['connected'] and esp32_buzzer_state['is_playing']:
             last_violation = esp32_buzzer_state.get('last_violation_time')
@@ -1530,7 +1530,7 @@ def process_frame_with_detection(frame, camera_id):
             if last_violation and (time.time() - last_violation) > timeout:
                 stop_esp32_buzzer()
                 logger.info("ESP32 Buzzer: Auto-stopped - no violations for %.1f seconds", timeout)
-        
+
         # ── Publish to Kafka ──
         if kafka_producer and kafka_producer.enabled:
             kafka_producer.publish_detection(
@@ -1540,7 +1540,7 @@ def process_frame_with_detection(frame, camera_id):
                 barriers=barriers_detected,
                 fps=camera_stats.get(camera_id, {}).get('fps', 0),
             )
-        
+
         # ── Publish to gRPC event bus ──
         if GRPC_AVAILABLE:
             try:
@@ -1551,55 +1551,55 @@ def process_frame_with_detection(frame, camera_id):
                 })
             except Exception:
                 pass
-        
+
     except Exception as e:
         logger.error(f"Detection processing error on camera {camera_id}: {e}")
-    
+
     return frame, detections, violations
 
 
 def add_professional_overlay(frame, camera_id, detections, violations, barriers=0):
     """Add professional information overlay to frame"""
     h, w = frame.shape[:2]
-    
+
     # Top bar - dark semi-transparent
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (w, 40), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-    
+
     # Camera name
     cam_name = cameras.get(camera_id, {}).get('position', f'Camera {camera_id}')
     cv2.putText(frame, cam_name, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
+
     # Timestamp
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     (ts_w, _), _ = cv2.getTextSize(timestamp, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     cv2.putText(frame, timestamp, (w-ts_w-10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-    
+
     # Bottom status bar
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h-35), (w, h), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-    
+
     # Status indicators
     status_y = h - 12
-    
+
     # Detection count
     det_text = f'PERSONS: {detections}'
     det_color = (0, 255, 0) if detections == 0 else (0, 165, 255) if detections < 3 else (0, 0, 255)
     cv2.putText(frame, det_text, (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, det_color, 2)
-    
+
     # Barrier count (if any)
     if barriers > 0:
         barrier_text = f'BARRIERS: {barriers}'
         cv2.putText(frame, barrier_text, (130, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
-    
+
     # FPS
     fps = camera_stats.get(camera_id, {}).get('fps', 0)
     fps_text = f'FPS: {fps:.1f}'
     fps_color = (0, 255, 0) if fps > 25 else (0, 165, 255) if fps > 15 else (0, 0, 255)
     cv2.putText(frame, fps_text, (w-120, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, fps_color, 2)
-    
+
     # Status indicator
     status_color = (0, 255, 0) if detections == 0 else (0, 0, 255)
     cv2.circle(frame, (w//2, h-18), 8, status_color, -1)
@@ -1608,16 +1608,16 @@ def add_professional_overlay(frame, camera_id, detections, violations, barriers=
 def generate_camera_frame(camera_id: int):
     """Generate video stream from cached frames - supports multiple clients"""
     global camera_frames, frame_ready_events
-    
+
     if camera_id not in cameras:
         error_frame = np.zeros((360, 480, 3), dtype=np.uint8)
-        cv2.putText(error_frame, f'Camera {camera_id} Not Available', 
+        cv2.putText(error_frame, f'Camera {camera_id} Not Available',
                    (80, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         ret, buffer = cv2.imencode('.jpg', error_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         return
-    
+
     # Stream cached frames
     while True:
         try:
@@ -1628,7 +1628,7 @@ def generate_camera_frame(camera_id: int):
             # Wait for new frame
             frame_ready_events[camera_id].wait(timeout=1.0)
             frame_ready_events[camera_id].clear()
-            
+
             if camera_frames[camera_id] is not None:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + camera_frames[camera_id] + b'\r\n')
@@ -1639,7 +1639,7 @@ def generate_camera_frame(camera_id: int):
                 ret, buffer = cv2.imencode('.jpg', no_feed, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            
+
         except GeneratorExit:
             break
         except Exception as e:
@@ -1710,7 +1710,7 @@ async def get_camera_stream(camera_id: int):
 async def get_system_stats():
     """Get overall system statistics"""
     uptime = (datetime.now() - system_stats['start_time']).total_seconds() if system_stats['start_time'] else 0
-    
+
     # Calculate average FPS
     avg_fps = 0
     active_cams = 0
@@ -1720,10 +1720,10 @@ async def get_system_stats():
             active_cams += 1
     if active_cams > 0:
         avg_fps /= active_cams
-    
+
     # Calculate detection rate
     detection_rate = system_stats['total_detections'] / (uptime / 60) if uptime > 60 else 0
-    
+
     # Get the active AI model name from the detection engine
     active_model_id = detection_engine.active_model_id if detection_engine and detection_engine.available else ''
 
@@ -1750,18 +1750,18 @@ async def get_events():
 
 
 @app.get("/api/violations")
-async def get_violations(camera_id: Optional[int] = None, limit: int = 100):
+async def get_violations(camera_id: int | None = None, limit: int = 100):
     """Get violation history with optional camera filter"""
     violations = list(violations_log)
-    
+
     # Filter by camera if specified
     if camera_id is not None:
         violations = [v for v in violations if v.get('camera_id') == camera_id]
-    
+
     # Return most recent violations
     violations = violations[-limit:]
     violations.reverse()  # Most recent first
-    
+
     return JSONResponse(content={
         'violations': violations,
         'total_count': len(violations_log),
@@ -1773,11 +1773,11 @@ async def get_violations(camera_id: Optional[int] = None, limit: int = 100):
 async def export_violations(format: str = 'json'):
     """Export violations to JSON or CSV"""
     violations = list(violations_log)
-    
+
     if format == 'csv':
-        import io
         import csv
-        
+        import io
+
         output = io.StringIO()
         if violations:
             # Use union of all keys across all entries for robust CSV
@@ -1786,7 +1786,7 @@ async def export_violations(format: str = 'json'):
             writer.writeheader()
             for row in violations:
                 writer.writerow({k: row.get(k, '') for k in all_keys})
-        
+
         from fastapi.responses import Response
         return Response(
             content=output.getvalue(),
@@ -1807,26 +1807,26 @@ async def export_violations(format: str = 'json'):
 async def get_violation_stats():
     """Get violation statistics"""
     violations = list(violations_log)
-    
+
     # Calculate stats
     total = len(violations)
     by_camera = defaultdict(int)
     by_zone_type = defaultdict(int)
     recent_1h = 0
     recent_24h = 0
-    
+
     now = datetime.now()
     for v in violations:
         ts = datetime.fromisoformat(v['timestamp'])
         by_camera[v['camera_id']] += 1
         by_zone_type[v.get('zone_type', 'unknown')] += 1
-        
+
         delta = (now - ts).total_seconds()
         if delta < 3600:
             recent_1h += 1
         if delta < 86400:
             recent_24h += 1
-    
+
     return JSONResponse(content={
         'total_violations': total,
         'violations_last_hour': recent_1h,
@@ -1847,11 +1847,11 @@ async def generate_pdf_report(period: str = "daily"):
             status_code=500,
             content={'status': 'error', 'message': 'PDF generation not available. Install reportlab: pip install reportlab'}
         )
-    
+
     try:
         violations = list(violations_log)
         now = datetime.now()
-        
+
         # Filter by period
         if period == "daily":
             cutoff = now - timedelta(days=1)
@@ -1865,20 +1865,20 @@ async def generate_pdf_report(period: str = "daily"):
         else:
             cutoff = now - timedelta(days=1)
             period_name = "Daily"
-        
+
         filtered_violations = [
-            v for v in violations 
+            v for v in violations
             if datetime.fromisoformat(v['timestamp']) > cutoff
         ]
-        
+
         # Generate PDF
         filename = f"vigil_report_{period}_{now.strftime('%Y%m%d_%H%M%S')}.pdf"
         filepath = REPORTS_DIR / filename
-        
+
         doc = SimpleDocTemplate(str(filepath), pagesize=A4)
         styles = getSampleStyleSheet()
         story = []
-        
+
         # Title
         title_style = ParagraphStyle(
             'CustomTitle',
@@ -1889,29 +1889,29 @@ async def generate_pdf_report(period: str = "daily"):
         )
         story.append(Paragraph(f"VIGIL V6 - {period_name} Security Report", title_style))
         story.append(Spacer(1, 12))
-        
+
         # Report info
         info_style = ParagraphStyle('Info', parent=styles['Normal'], fontSize=11)
         story.append(Paragraph(f"<b>Generated:</b> {now.strftime('%Y-%m-%d %H:%M:%S')}", info_style))
         story.append(Paragraph(f"<b>Report Period:</b> {cutoff.strftime('%Y-%m-%d %H:%M')} to {now.strftime('%Y-%m-%d %H:%M')}", info_style))
         story.append(Paragraph(f"<b>Total Violations:</b> {len(filtered_violations)}", info_style))
         story.append(Spacer(1, 20))
-        
+
         # Summary Statistics
         story.append(Paragraph("Summary Statistics", styles['Heading2']))
         story.append(Spacer(1, 10))
-        
+
         # Calculate stats
         by_camera = defaultdict(int)
         by_zone_type = defaultdict(int)
         by_hour = defaultdict(int)
-        
+
         for v in filtered_violations:
             by_camera[f"Camera {v['camera_id']}"] += 1
             by_zone_type[v.get('zone_type', 'unknown').upper()] += 1
             ts = datetime.fromisoformat(v['timestamp'])
             by_hour[ts.hour] += 1
-        
+
         # Stats table
         stats_data = [
             ['Metric', 'Value'],
@@ -1922,7 +1922,7 @@ async def generate_pdf_report(period: str = "daily"):
             ['Restricted Zone Violations', str(by_zone_type.get('RESTRICTED', 0))],
             ['Warning Zone Violations', str(by_zone_type.get('WARNING', 0))],
         ]
-        
+
         stats_table = Table(stats_data, colWidths=[3*inch, 2*inch])
         stats_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
@@ -1938,18 +1938,18 @@ async def generate_pdf_report(period: str = "daily"):
         ]))
         story.append(stats_table)
         story.append(Spacer(1, 25))
-        
+
         # Violations by Camera
         if by_camera:
             story.append(Paragraph("Violations by Camera", styles['Heading2']))
             story.append(Spacer(1, 10))
-            
+
             cam_data = [['Camera', 'Violations', 'Percentage']]
             total = len(filtered_violations)
             for cam, count in sorted(by_camera.items(), key=lambda x: x[1], reverse=True):
                 pct = f"{(count/total*100):.1f}%" if total > 0 else "0%"
                 cam_data.append([cam, str(count), pct])
-            
+
             cam_table = Table(cam_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
             cam_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
@@ -1962,18 +1962,18 @@ async def generate_pdf_report(period: str = "daily"):
             ]))
             story.append(cam_table)
             story.append(Spacer(1, 25))
-        
+
         # Violations by Zone Type
         if by_zone_type:
             story.append(Paragraph("Violations by Zone Type", styles['Heading2']))
             story.append(Spacer(1, 10))
-            
+
             zone_data = [['Zone Type', 'Violations', 'Severity']]
             severity_map = {'RESTRICTED': 'HIGH', 'WARNING': 'MEDIUM', 'SAFE': 'LOW'}
             for zone_type, count in sorted(by_zone_type.items(), key=lambda x: x[1], reverse=True):
                 severity = severity_map.get(zone_type, 'UNKNOWN')
                 zone_data.append([zone_type, str(count), severity])
-            
+
             zone_table = Table(zone_data, colWidths=[2*inch, 1.5*inch, 1.5*inch])
             zone_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#dc3545')),
@@ -1986,11 +1986,11 @@ async def generate_pdf_report(period: str = "daily"):
             ]))
             story.append(zone_table)
             story.append(Spacer(1, 25))
-        
+
         # Recent Violations Detail
         story.append(Paragraph("Recent Violations (Last 20)", styles['Heading2']))
         story.append(Spacer(1, 10))
-        
+
         recent = filtered_violations[-20:] if len(filtered_violations) > 20 else filtered_violations
         if recent:
             detail_data = [['Time', 'Camera', 'Zone', 'Type']]
@@ -2002,7 +2002,7 @@ async def generate_pdf_report(period: str = "daily"):
                     v.get('zone_name', 'Unknown')[:15],
                     v.get('zone_type', 'N/A').upper()
                 ])
-            
+
             detail_table = Table(detail_data, colWidths=[1.5*inch, 1*inch, 1.8*inch, 1.2*inch])
             detail_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#6c757d')),
@@ -2017,26 +2017,26 @@ async def generate_pdf_report(period: str = "daily"):
             story.append(detail_table)
         else:
             story.append(Paragraph("No violations recorded in this period.", styles['Normal']))
-        
+
         story.append(Spacer(1, 30))
-        
+
         # Footer
         footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=9, textColor=colors.gray)
         story.append(Paragraph("━" * 60, footer_style))
         story.append(Paragraph("Generated by VIGIL V6.0 - AI-Powered Pedestrian Detection System", footer_style))
         story.append(Paragraph(f"Report ID: RPT-{now.strftime('%Y%m%d%H%M%S')}", footer_style))
-        
+
         # Build PDF
         doc.build(story)
-        
+
         logger.info(f"PDF report generated: {filepath}")
-        
+
         return FileResponse(
             path=str(filepath),
             filename=filename,
             media_type='application/pdf'
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to generate PDF report: {e}")
         return JSONResponse(
@@ -2057,7 +2057,7 @@ async def list_reports():
             'created': datetime.fromtimestamp(stats.st_ctime).isoformat(),
             'download_url': f'/api/reports/download/{f.name}'
         })
-    
+
     return JSONResponse(content={
         'reports': sorted(reports, key=lambda x: x['created'], reverse=True)
     })
@@ -2069,7 +2069,7 @@ async def download_report(filename: str):
     filepath = REPORTS_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Report not found")
-    
+
     return FileResponse(
         path=str(filepath),
         filename=filename,
@@ -2089,7 +2089,7 @@ async def get_audio_settings():
 async def update_audio_settings(request: dict):
     """Update audio alarm settings"""
     global AUDIO_ALARM_CONFIG
-    
+
     if 'enabled' in request:
         AUDIO_ALARM_CONFIG['enabled'] = bool(request['enabled'])
     if 'volume' in request:
@@ -2098,7 +2098,7 @@ async def update_audio_settings(request: dict):
         AUDIO_ALARM_CONFIG['sound_type'] = request['sound_type']
     if 'cooldown' in request:
         AUDIO_ALARM_CONFIG['cooldown'] = int(request['cooldown'])
-    
+
     logger.info(f"Audio settings updated: {AUDIO_ALARM_CONFIG}")
     return JSONResponse(content={'status': 'success', 'settings': AUDIO_ALARM_CONFIG})
 
@@ -2120,18 +2120,18 @@ async def send_violation_alert(violation: dict):
     """Send email alert for violation (if configured)"""
     if not EMAIL_CONFIG.get('enabled', False):
         return JSONResponse(content={'status': 'disabled', 'message': 'Email alerts not configured'})
-    
+
     try:
         import smtplib
-        from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
-        
+        from email.mime.text import MIMEText
+
         # Create email
         msg = MIMEMultipart()
         msg['From'] = EMAIL_CONFIG['sender_email']
         msg['To'] = ', '.join(EMAIL_CONFIG['recipient_emails'])
-        msg['Subject'] = f"🚨 VIGIL Alert: Zone Violation Detected"
-        
+        msg['Subject'] = "🚨 VIGIL Alert: Zone Violation Detected"
+
         body = f"""
         VIGIL V6 - Zone Violation Alert
         
@@ -2144,18 +2144,18 @@ async def send_violation_alert(violation: dict):
         ---
         This is an automated alert from VIGIL AI Detection System
         """
-        
+
         msg.attach(MIMEText(body, 'plain'))
-        
+
         # Send email
         with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as server:
             server.starttls()
             server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
             server.send_message(msg)
-        
+
         logger.info(f"Email alert sent for violation in zone {violation.get('zone_name')}")
         return JSONResponse(content={'status': 'success', 'message': 'Email alert sent'})
-        
+
     except Exception as e:
         logger.error(f"Failed to send email alert: {e}")
         return JSONResponse(content={'status': 'error', 'message': str(e)})
@@ -2166,26 +2166,26 @@ async def get_camera_zones(camera_id: int):
     """Get all zones for a camera"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     return JSONResponse(content={'zones': camera_zones.get(camera_id, [])})
 
 
 @app.post("/api/camera/{camera_id}/zones")
-async def add_camera_zone(camera_id: int, zone_data: Dict[str, Any] = Body(...)):
+async def add_camera_zone(camera_id: int, zone_data: dict[str, Any] = Body(...)):
     """Add zone to camera"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     # Generate unique ID for zone
     import uuid
     zone_data['id'] = str(uuid.uuid4())
     zone_data['camera_id'] = camera_id
     zone_data['active'] = zone_data.get('active', True)
     zone_data['created_at'] = datetime.now().isoformat()
-    
+
     camera_zones[camera_id].append(zone_data)
     save_zones()
-    
+
     event_log.append({
         'timestamp': datetime.now().isoformat(),
         'camera_id': camera_id,
@@ -2193,16 +2193,16 @@ async def add_camera_zone(camera_id: int, zone_data: Dict[str, Any] = Body(...))
         'description': f'Zone "{zone_data.get("name", "Unknown")}" ({zone_data.get("type", "unknown")}) created',
         'confidence': 1.0
     })
-    
+
     return JSONResponse(content={'status': 'success', 'zone': zone_data})
 
 
 @app.put("/api/camera/{camera_id}/zones/{zone_id}")
-async def update_camera_zone(camera_id: int, zone_id: str, zone_data: Dict[str, Any] = Body(...)):
+async def update_camera_zone(camera_id: int, zone_id: str, zone_data: dict[str, Any] = Body(...)):
     """Update existing zone"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     zones = camera_zones.get(camera_id, [])
     for i, zone in enumerate(zones):
         if zone.get('id') == zone_id:
@@ -2211,7 +2211,7 @@ async def update_camera_zone(camera_id: int, zone_id: str, zone_data: Dict[str, 
             zone['updated_at'] = datetime.now().isoformat()
             camera_zones[camera_id][i] = zone
             save_zones()
-            
+
             event_log.append({
                 'timestamp': datetime.now().isoformat(),
                 'camera_id': camera_id,
@@ -2219,9 +2219,9 @@ async def update_camera_zone(camera_id: int, zone_id: str, zone_data: Dict[str, 
                 'description': f'Zone "{zone["name"]}" updated',
                 'confidence': 1.0
             })
-            
+
             return JSONResponse(content={'status': 'success', 'zone': zone})
-    
+
     raise HTTPException(status_code=404, detail="Zone not found")
 
 
@@ -2230,13 +2230,13 @@ async def delete_camera_zone(camera_id: int, zone_id: str):
     """Delete zone from camera"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     zones = camera_zones.get(camera_id, [])
     for i, zone in enumerate(zones):
         if zone.get('id') == zone_id:
             removed_zone = camera_zones[camera_id].pop(i)
             save_zones()
-            
+
             event_log.append({
                 'timestamp': datetime.now().isoformat(),
                 'camera_id': camera_id,
@@ -2244,9 +2244,9 @@ async def delete_camera_zone(camera_id: int, zone_id: str):
                 'description': f'Zone "{removed_zone["name"]}" deleted',
                 'confidence': 1.0
             })
-            
+
             return JSONResponse(content={'status': 'success', 'message': 'Zone deleted'})
-    
+
     raise HTTPException(status_code=404, detail="Zone not found")
 
 
@@ -2255,10 +2255,10 @@ async def toggle_camera_detection(camera_id: int, request: dict):
     """Toggle detection for a specific camera"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     enabled = request.get('enabled', True)
     camera_settings[camera_id]['detection_enabled'] = enabled
-    
+
     event_log.append({
         'timestamp': datetime.now().isoformat(),
         'camera_id': camera_id,
@@ -2266,7 +2266,7 @@ async def toggle_camera_detection(camera_id: int, request: dict):
         'description': f'Detection {"enabled" if enabled else "disabled"}',
         'confidence': 1.0
     })
-    
+
     return JSONResponse(content={'status': 'success', 'detection_enabled': enabled})
 
 
@@ -2275,10 +2275,10 @@ async def toggle_camera_recording(camera_id: int, request: dict):
     """Toggle recording for a specific camera - now actually records to MP4"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     recording = request.get('recording', False)
     result_info = None
-    
+
     if recording:
         # Start recording
         success = start_recording(camera_id)
@@ -2292,7 +2292,7 @@ async def toggle_camera_recording(camera_id: int, request: dict):
         result_info = stop_recording(camera_id)
         cameras[camera_id]['recording'] = False
         description = 'Recording STOPPED'
-    
+
     event_log.append({
         'timestamp': datetime.now().isoformat(),
         'camera_id': camera_id,
@@ -2300,12 +2300,12 @@ async def toggle_camera_recording(camera_id: int, request: dict):
         'description': description,
         'confidence': 1.0
     })
-    
+
     response_data = {
-        'status': 'success', 
+        'status': 'success',
         'recording': recording
     }
-    
+
     if result_info:
         response_data['recording_info'] = {
             'filename': result_info.get('filename', ''),
@@ -2313,7 +2313,7 @@ async def toggle_camera_recording(camera_id: int, request: dict):
             'frame_count': result_info.get('frame_count', 0),
             'duration': result_info.get('duration', 0) if not recording else None
         }
-    
+
     return JSONResponse(content=response_data)
 
 
@@ -2321,7 +2321,7 @@ async def toggle_camera_recording(camera_id: int, request: dict):
 async def list_recordings():
     """List all saved recordings"""
     recordings = []
-    
+
     try:
         for file in sorted(RECORDINGS_DIR.glob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
             stat = file.stat()
@@ -2333,7 +2333,7 @@ async def list_recordings():
             })
     except Exception as e:
         logger.error(f"Error listing recordings: {e}")
-    
+
     return JSONResponse(content={'recordings': recordings, 'count': len(recordings)})
 
 
@@ -2341,14 +2341,14 @@ async def list_recordings():
 async def download_recording(filename: str):
     """Download a recording file"""
     filepath = (RECORDINGS_DIR / filename).resolve()
-    
+
     # Security: prevent path traversal
     if not filepath.is_relative_to(RECORDINGS_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    
+
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Recording not found")
-    
+
     return FileResponse(
         path=str(filepath),
         filename=filename,
@@ -2360,14 +2360,14 @@ async def download_recording(filename: str):
 async def delete_recording(filename: str):
     """Delete a recording file"""
     filepath = (RECORDINGS_DIR / filename).resolve()
-    
+
     # Security: prevent path traversal
     if not filepath.is_relative_to(RECORDINGS_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    
+
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Recording not found")
-    
+
     try:
         filepath.unlink()
         return JSONResponse(content={'status': 'success', 'message': f'Deleted {filename}'})
@@ -2379,7 +2379,7 @@ async def delete_recording(filename: str):
 async def get_tamper_status():
     """Get tamper detection status for all cameras"""
     status = {}
-    
+
     for camera_id in cameras.keys():
         state = tamper_state[camera_id]
         status[camera_id] = {
@@ -2388,7 +2388,7 @@ async def get_tamper_status():
             'warning_sent': state['warning_sent'],
             'camera_name': cameras.get(camera_id, {}).get('position', f'Camera {camera_id}')
         }
-    
+
     return JSONResponse(content={
         'tamper_status': status,
         'config': TAMPER_DETECTION_CONFIG
@@ -2399,7 +2399,7 @@ async def get_tamper_status():
 async def update_tamper_settings(request: dict):
     """Update tamper detection settings"""
     global TAMPER_DETECTION_CONFIG
-    
+
     if 'enabled' in request:
         TAMPER_DETECTION_CONFIG['enabled'] = request['enabled']
     if 'darkness_threshold' in request:
@@ -2408,7 +2408,7 @@ async def update_tamper_settings(request: dict):
         TAMPER_DETECTION_CONFIG['warning_delay'] = int(request['warning_delay'])
     if 'static_threshold' in request:
         TAMPER_DETECTION_CONFIG['static_threshold'] = float(request['static_threshold'])
-    
+
     return JSONResponse(content={
         'status': 'success',
         'config': TAMPER_DETECTION_CONFIG
@@ -2473,14 +2473,14 @@ async def switch_ai_model(request: dict):
 async def toggle_system_power(request: dict):
     """Toggle system power on/off"""
     global system_stats
-    
+
     enabled = request.get('enabled', True)
     system_stats['system_enabled'] = enabled
-    
+
     # Disable/enable all camera detection
     for cam_id in camera_settings.keys():
         camera_settings[cam_id]['detection_enabled'] = enabled
-    
+
     event_log.append({
         'timestamp': datetime.now().isoformat(),
         'camera_id': -1,
@@ -2488,7 +2488,7 @@ async def toggle_system_power(request: dict):
         'description': f'System {"enabled" if enabled else "disabled"}',
         'confidence': 1.0
     })
-    
+
     return JSONResponse(content={'status': 'success', 'enabled': enabled})
 
 
@@ -2497,9 +2497,9 @@ async def shutdown_server():
     """Shutdown the server gracefully"""
     import os
     import signal
-    
+
     logger.info("Shutdown requested via API")
-    
+
     # Release all cameras
     for cam_id, cam_data in cameras.items():
         try:
@@ -2511,7 +2511,7 @@ async def shutdown_server():
                     logger.info(f"Camera {cam_id} released")
         except Exception as e:
             logger.error(f"Error releasing camera {cam_id}: {e}")
-    
+
     event_log.append({
         'timestamp': datetime.now().isoformat(),
         'camera_id': -1,
@@ -2519,14 +2519,14 @@ async def shutdown_server():
         'description': 'Server shutdown requested',
         'confidence': 1.0
     })
-    
+
     # Schedule shutdown after response
     async def do_shutdown():
         await asyncio.sleep(0.5)
         os.kill(os.getpid(), signal.SIGTERM)
-    
+
     asyncio.create_task(do_shutdown())
-    
+
     return JSONResponse(content={'status': 'shutting_down', 'message': 'Server is shutting down...'})
 
 
@@ -2540,7 +2540,7 @@ async def get_barrier_settings():
 async def update_barrier_settings(request: dict):
     """Update barrier detection settings"""
     global barrier_settings
-    
+
     if 'enabled' in request:
         barrier_settings['enabled'] = bool(request['enabled'])
     if 'min_area' in request:
@@ -2559,9 +2559,9 @@ async def update_barrier_settings(request: dict):
         barrier_settings['min_color_coverage'] = float(request['min_color_coverage'])
     if 'show_debug' in request:
         barrier_settings['show_debug'] = bool(request['show_debug'])
-    
+
     logger.info(f"Barrier settings updated: {barrier_settings}")
-    
+
     return JSONResponse(content={'status': 'success', 'settings': barrier_settings})
 
 
@@ -2574,11 +2574,11 @@ async def get_system_params():
         # Run CPU measurement in thread pool to avoid blocking async loop
         loop = asyncio.get_event_loop()
         cpu_percent = await loop.run_in_executor(None, lambda: psutil.cpu_percent(interval=0.1))
-        
+
         # Get memory usage
         memory = psutil.virtual_memory()
         mem_percent = memory.percent
-        
+
         # Get temperature (try different methods)
         temp = 0
         try:
@@ -2593,7 +2593,7 @@ async def get_system_params():
         except Exception:
             # Fallback: estimate based on CPU usage
             temp = 30 + (cpu_percent * 0.6)
-        
+
         return JSONResponse(content={
             'cpu': round(cpu_percent, 1),
             'memory': round(mem_percent, 1),
@@ -2619,17 +2619,17 @@ async def get_camera_history(camera_id: int):
     """Get detection history for camera"""
     history = list(detection_history.get(camera_id, []))
     return JSONResponse(content={'history': [
-        {'timestamp': h['timestamp'], 'count': h['count']} 
+        {'timestamp': h['timestamp'], 'count': h['count']}
         for h in history
     ]})
 
 
 @app.post("/api/camera/{camera_id}/settings")
-async def update_camera_settings(camera_id: int, settings: Dict[str, Any]):
+async def update_camera_settings(camera_id: int, settings: dict[str, Any]):
     """Update camera settings"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     camera_settings[camera_id].update(settings)
     return JSONResponse(content={'status': 'success', 'settings': camera_settings[camera_id]})
 
@@ -2639,7 +2639,7 @@ async def get_camera_settings(camera_id: int):
     """Get camera settings"""
     if camera_id not in cameras:
         raise HTTPException(status_code=404, detail="Camera not found")
-    
+
     return JSONResponse(content=camera_settings.get(camera_id, {}))
 
 

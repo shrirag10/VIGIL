@@ -2,14 +2,13 @@
 VIGIL V7.0 — Basic API Tests
 """
 
-import pytest
 
 
 def test_imports():
     """Verify core dependencies can be imported."""
     import fastapi
-    import pydantic
     import numpy
+    import pydantic
     assert fastapi.__version__
     assert pydantic.__version__
     assert numpy.__version__
@@ -20,7 +19,6 @@ def test_vigil_app_creation():
     # Import the module — this validates no syntax errors
     # and that the FastAPI app object is created
     import importlib
-    import sys
 
     # We need to handle the case where cameras aren't available
     # Just verify the module can be parsed

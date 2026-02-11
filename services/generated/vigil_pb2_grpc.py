@@ -26,7 +26,7 @@ if _version_not_supported:
     )
 
 
-class VIGILDetectionStub(object):
+class VIGILDetectionStub:
     """═══════════════════════════════════════════
     Service Definitions
     ═══════════════════════════════════════════
@@ -63,7 +63,7 @@ class VIGILDetectionStub(object):
                 _registered_method=True)
 
 
-class VIGILDetectionServicer(object):
+class VIGILDetectionServicer:
     """═══════════════════════════════════════════
     Service Definitions
     ═══════════════════════════════════════════
@@ -131,7 +131,7 @@ def add_VIGILDetectionServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class VIGILDetection(object):
+class VIGILDetection:
     """═══════════════════════════════════════════
     Service Definitions
     ═══════════════════════════════════════════
@@ -249,7 +249,7 @@ class VIGILDetection(object):
             _registered_method=True)
 
 
-class VIGILManagementStub(object):
+class VIGILManagementStub:
     """Camera and zone management service
     """
 
@@ -311,7 +311,7 @@ class VIGILManagementStub(object):
                 _registered_method=True)
 
 
-class VIGILManagementServicer(object):
+class VIGILManagementServicer:
     """Camera and zone management service
     """
 
@@ -439,7 +439,7 @@ def add_VIGILManagementServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class VIGILManagement(object):
+class VIGILManagement:
     """Camera and zone management service
     """
 
